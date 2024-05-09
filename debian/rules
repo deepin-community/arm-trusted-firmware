@@ -1,4 +1,94 @@
 #!/usr/bin/make -f
 
+include /usr/share/dpkg/architecture.mk
+include /usr/share/dpkg/buildtools.mk
+
+export DH_VERBOSE=1
+export TF_CFLAGS += -ffile-prefix-map=$(CURDIR)=.
+export DEB_BUILD_MAINT_OPTIONS=hardening=+all
+
+# Enable verbose build by default, disable when terse is specified.
+ifneq (,$(filter terse,$(DEB_BUILD_OPTIONS)))
+VERBOSE=0
+else
+VERBOSE=1
+endif
+
+platforms := g12a gxbb sun50i_a64 sun50i_h6 rcar rk3328 rk3399 rpi3 rpi4 imx8mn imx8mm
+# Disable building of imx8mq, as it is not well supported upstream.
+#platforms_nodebug := imx8mq
+
+# By default, iMX8MN uses UART2 console. However, other boards supported
+# upstream (e.g. Variscite VAR-SOM-MX8M-NANO board) uses UART4.
+# Add two subplatforms for imx8mn platform:
+#   * imx8mn: default configuration
+#   * imx8mn_uart4: console set to UART4
+imx8mn_subplatforms := imx8mn imx8mn_uart4
+imx8mn_uart4_assigns := IMX_BOOT_UART_BASE=0x30a60000
+
+# By default, iMX8MM uses UART2 console. However, other boards
+# use other UARTs
+imx8mm_subplatforms := imx8mm imx8mm_uart1 imx8mm_uart3 imx8mm_uart4
+imx8mm_uart1_assigns := IMX_BOOT_UART_BASE=0x30860000
+imx8mm_uart3_assigns := IMX_BOOT_UART_BASE=0x30880000
+imx8mm_uart4_assigns := IMX_BOOT_UART_BASE=0x30A60000
+
+# TF-A's regulator setup breaks Ethernet on some H6 boards,
+# so make it optional by having two subplatforms:
+#   * sun50i_h6: default configuration
+#   * sun50i_h6_no_pmic: skip regulator setup
+sun50i_h6_subplatforms := sun50i_h6 sun50i_h6_no_pmic
+sun50i_h6_no_pmic_assigns := SUNXI_SETUP_REGULATORS=0
+
+rk3328_targets := bl31/bl31.elf
+rk3399_targets := bl31/bl31.elf
+
+rcar_subplatforms := rcar_uclb_h3 rcar_uclb_m3w rcar_uclb_m3n
+rcar_uclb_h3_assigns := LSI=H3 RCAR_DRAM_SPLIT=1 RCAR_GEN3_ULCB=1 PMIC_LEVEL_MODE=0 RCAR_DRAM_LPDDR4_MEMCONF=0 SPD=opteed RCAR_LOSSY_ENABLE=1
+rcar_uclb_m3n_assigns := LSI=M3N RCAR_GEN3_ULCB=1 PMIC_LEVEL_MODE=0 RCAR_DRAM_LPDDR4_MEMCONF=0 SPD=opteed RCAR_LOSSY_ENABLE=1
+rcar_uclb_m3w_assigns := LSI=M3 RCAR_DRAM_SPLIT=2 RCAR_GEN3_ULCB=1 PMIC_LEVEL_MODE=0 RCAR_DRAM_LPDDR4_MEMCONF=0 SPD=opteed RCAR_LOSSY_ENABLE=1
+
+rcar_targets := bl31.srec bl2.srec
+rcar_make_target := rcar
+
+# Always set CROSS_COMPILE, which also works for native builds.
+define build_platform
+	$(eval platform := $(1))
+	$(eval debug := $(2))
+	$(eval buildtype := $(3))
+	$(eval subplatforms := $(if $($(platform)_subplatforms), $($(platform)_subplatforms), $(platform)))
+	$(eval targets := $(if $($(platform)_targets), $($(platform)_targets), bl31.bin))
+	$(eval make_target := $(if $($(platform)_make_target), $($(platform)_make_target), bl31))
+	$(foreach subplatform, $(subplatforms), \
+		CROSS_COMPILE=aarch64-linux-gnu- CFLAGS=--param=min-pagesize=0 LDFLAGS= TF_LDFLAGS=--no-warn-rwx-segments dh_auto_build -- V=$(VERBOSE) DEBUG=$(debug) $($(subplatform)_assigns) PLAT=$(platform) $(make_target) ; \
+		$(foreach target, $(targets), \
+			install -m644 build/$(platform)/$(board)/$(buildtype)/$(target) -Dt build/renamed/$(subplatform) ; \
+		) \
+		# For each subplatform, make is called using the same PLAT variable. If
+		# the build is not cleaned between each call, objects will remain the
+		# same, without rebuilding them.
+		make DEBUG=$(debug) $($(subplatform)_assigns) PLAT=$(platform) clean ; \
+	)
+endef
+
 %:
 	dh $@
+
+override_dh_auto_build:
+# Disable building of arm-trusted-firmware-tools
+ifeq ($(filter pkg.arm-trusted-firmware.notools,$(DEB_BUILD_PROFILES)),)
+	dh_auto_build --sourcedir=tools/fiptool     -- DEBUG=1 V=$(VERBOSE) HOSTCC=$(CC) HOSTCCFLAGS="$(CFLAGS) $(CPPFLAGS)"
+	dh_auto_build --sourcedir=tools/cert_create -- DEBUG=1 V=$(VERBOSE) HOSTCC=$(CC) HOSTCCFLAGS="$(CFLAGS) $(CPPFLAGS) -std=c99 -DUSE_TBBR_DEFS=1"
+endif
+# Only build firmware on arm64.
+ifeq ($(DEB_HOST_ARCH),arm64)
+  override_dh_auto_build: $(platforms) $(platforms_nodebug)
+  $(platforms):
+	$(call build_platform,$@,1,debug)
+  $(platforms_nodebug):
+	$(call build_platform,$@,0,release)
+endif
+
+override_dh_installchangelogs:
+	dh_installchangelogs -parm-trusted-firmware docs/change-log.md
+	dh_installchangelogs -parm-trusted-firmware-tools

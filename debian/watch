@@ -1,0 +1,7 @@
+version=4
+
+opts=dversionmangle=auto,\
+     filenamemangle=s/.*trusted-firmware-a-(.*)/@PACKAGE@-$1/,\
+     repacksuffix=+dfsg,\
+     uversionmangle=s/-rc/~rc/ \
+  https://git.trustedfirmware.org/TF-A/trusted-firmware-a.git/ .*/trusted-firmware-a-@ANY_VERSION@.tar.gz
