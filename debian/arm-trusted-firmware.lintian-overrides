@@ -1,0 +1,5 @@
+# This is boot firmware that needs to be statically linked.
+arm-trusted-firmware binary: statically-linked-binary *usr/lib/arm-trusted-firmware/*/bl31.elf*
+
+# Intended for U-Boot, not linux.
+arm-trusted-firmware binary: wrong-section-according-to-package-name admin => kernel

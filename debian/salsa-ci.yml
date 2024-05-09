@@ -1,0 +1,12 @@
+---
+include:
+  - https://salsa.debian.org/salsa-ci-team/pipeline/raw/master/recipes/debian.yml
+
+variables:
+  # no autopkgtest tests
+  SALSA_CI_DISABLE_AUTOPKGTEST: 1
+  # No arch:all packages
+  SALSA_CI_DISABLE_BUILD_PACKAGE_ALL: 1
+
+test-crossbuild-arm64:
+  allow_failure: false
